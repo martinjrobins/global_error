@@ -27,17 +27,21 @@ def runge_kutta4(f, t0, h, y0):
 
 def runge_kutta4_stage(f, t0, h, y0):
     """classic 4th order method"""
-    k = np.empty(4)
     y = np.empty(4)
+    x = np.empty(4)
     y[0] = y0
-    k[0] = f(t0, y[0])
-    y[1] = y0 + 0.5*h*k[0]
-    k[1] = f(t0 + 0.5*h, y[1])
-    y[2] = y0 + 0.5*h*k[1]
-    k[2] = f(t0 + 0.5*h, y[2])
-    y[3] = y0 + h*k[2]
-    k[3] = f(t0 + h, y[3])
-    return y, k
+    x[0] = t0
+    k = f(x[0], y[0])
+    y[1] = y0 + 0.5*h*k
+    x[1] = t0 + 0.5*h
+    k = f(x[1], y[1])
+    y[2] = y0 + 0.5*h*k
+    x[2] = t0 + 0.5*h
+    k = f(x[2], y[2])
+    y[3] = y0 + h*k
+    x[3] = t0 + h
+    k = f(x[3], y[3])
+    return y, x
 
 def runge_kutta41(f, t0, h, y0):
     k = np.empty(4)
@@ -48,17 +52,23 @@ def runge_kutta41(f, t0, h, y0):
     return y0 + h * (1/8*k[0] + 3/8*k[1] + 3/8*k[2] + 1/8*k[3])
 
 def runge_kutta41_stage(f, t0, h, y0):
+    x = np.empty(4)
     k = np.empty(4)
     y = np.empty(4)
     y[0] = y0
-    k[0] = f(t0, y[0])
+    x[0] = t0
+    k[0] = f(x[0], y[0])
     y[1] = y0 + h*(1/3*k[0])
-    k[1] = f(t0 + 1/3*h, y[1])
+    x[1] = t0 + 1/3*h
+    k[1] = f(x[1], y[1])
     y[2] = y0 + h*(-1/3*k[0] + k[1])
-    k[2] = f(t0 + 2/3*h, y[2])
+    x[2] = t0 + 2/3*h
+    k[2] = f(x[2], y[2])
     y[3] = y0 + h*(k[0] - k[1] + k[2])
-    k[3] = f(t0 + h, y[3])
-    return y, k
+    x[3] = t0 + h
+    k[3] = f(x[3], y[3])
+    y[3] = y0 + h * (1/8*k[0] + 3/8*k[1] + 3/8*k[2] + 1/8*k[3])
+    return y, x
 
 def runge_kutta5(f, t0, h, y0):
     """dormond-price 5th order method"""

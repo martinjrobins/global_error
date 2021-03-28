@@ -1,5 +1,6 @@
 import numpy as np
-from .runge_kutta import (
+from scipy.linalg import lu_factor, lu_solve
+from runge_kutta import (
     runge_kutta5,
     runge_kutta4,
     runge_kutta41,
@@ -7,37 +8,32 @@ from .runge_kutta import (
     runge_kutta41_stage,
     runge_kutta5_stage,
 )
+from interpolate import CubicHermiteInterpolate
 
 
-def integrate(rhs, times, y0):
+def integrate(rhs, times, y0, args=()):
     y = np.empty_like(times)
     y[0] = y0
     for i, t in enumerate(times[:-1]):
-        y[i+1] = \
-            runge_kutta5(rhs, times[i], times[i+1] - times[i], y[i])
-    return y
-
-class Interpolate:
-    def __init__(self, rhs, t0, h, y0):
-        self.y, _ = runge_kutta4_stage(rhs, t0, h, y0)
-        # fit polynomial to y
-    def __call__(self, t):
-        # return polynomial(t-t0)
-
-
-def integrate_adjoint(rhs, drhs_dy, times, y):
-    n = y.shape[1]
-
-    def adjoint_rhs(t, aug_y, y_interp):
-        y = aug_y[:n]
-        phi = aug_y[n:]
-        return -drhs_dy(y_interp(t), t) * phi
-
-    aug_y = np.empty_like(times)
-    aug_y[0] = y0
-    for i, t in reverse(enumerate(times[:-1])):
         t0 = times[i]
         t1 = times[i+1]
-        y_interp = Interpolate(rhs, t0, t1-t0, y[i])
-        aug_y[i] = runge_kutta5(adjoint_rhs, t1, t1-t0, aug_y[i+1])
+        y[i+1] = runge_kutta4(rhs, t0, t1-t0, y[i], *args)
     return y
+
+
+def integrate_adjoint(rhs, jac, times, y):
+    n = y.shape[1]
+
+    def adjoint(t, phi, y_interp):
+        return -jac(y_interp(t), t, phi)
+
+    phi = np.empty_like(times)
+    phi[0] = y0
+    for i, t in reversed(enumerate(times[:-1])):
+        t0 = times[i]
+        t1 = times[i+1]
+        y = CubicHermiteInterpolate(
+            t0, t1, y[i], y[i+1], rhs(y[i]), rhs(y[i+1])
+        )
+        phi[i] = runge_kutta5(adjoint, t1, t0-t1, phi[i+1], args=(y))
+    return phi
