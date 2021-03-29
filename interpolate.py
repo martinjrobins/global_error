@@ -20,3 +20,17 @@ class CubicHermiteInterpolate:
             + h10 * self.h * self.m0 \
             + h01 * self.p1 \
             + h11 * self.h * self.m1
+
+    def grad(self, raw_t):
+        t = (raw_t - self.t0) / self.h
+        t2 = t**2
+        h00 = 6 * t2 - 6 * t
+        h10 = 3 * t2 - 4 * t + 1
+        h01 = -h00
+        h11 = 3 * t2 - 2 * t
+        return (
+            h00 * self.p0
+            + h10 * self.h * self.m0
+            + h01 * self.p1
+            + h11 * self.h * self.m1
+        ) / self.h
