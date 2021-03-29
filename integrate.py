@@ -15,7 +15,6 @@ def integrate(rhs, times, y0, args=(), method=runge_kutta4):
     elif not isinstance(y0, np.ndarray):
         raise TypeError('y0 should be a number or ndarray')
 
-
     T = len(times)
     n = len(y0)
     y = np.empty((T, n), dtype=y0.dtype)
@@ -45,7 +44,6 @@ def adjoint_sensitivities(
             -drhs_dp(t, y_interp(t), phi),
         ))
 
-
     Ju = dfunc_dy(y)
     if Ju.shape[0] != T:
         raise RuntimeError(
@@ -72,6 +70,7 @@ def adjoint_sensitivities(
 
     return phi_dJdp[n:]
 
+
 def adjoint_error(
         rhs, jac, dfunc_dy, times, y, method=runge_kutta5
 ):
@@ -89,7 +88,6 @@ def adjoint_error(
             -jac(t, y_interp(t), phi),
             (rhs(t, y_interp(t)) - y_interp.grad(t)) * phi,
         ))
-
 
     Ju = dfunc_dy(y)
     if Ju.shape[0] != T:
@@ -112,8 +110,6 @@ def adjoint_error(
 
         # integrate
         phi_error = method(adjoint_error,
-                          t1, t0-t1, phi_error, (y_interp,))
+                           t1, t0-t1, phi_error, (y_interp,))
 
     return phi_error[-1]
-
-

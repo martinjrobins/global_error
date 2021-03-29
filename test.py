@@ -83,7 +83,6 @@ class TestGlobalError(unittest.TestCase):
         np.testing.assert_allclose(
             analytic_grad, interp_grad, rtol=1e-5, atol=0)
 
-
     def test_interpolate2d(self):
         def rhs(t, y):
             return -y
