@@ -1,5 +1,6 @@
 from integrate import (
     integrate,
+    integrate_adaptive,
     adjoint_sensitivities,
     adjoint_error,
 )
@@ -120,6 +121,35 @@ class TestGlobalError(unittest.TestCase):
             analytic, y, rtol=1e-5, atol=0
         )
 
+    @unittest.skip("not working yet")
+    def test_integrate_logistic_adaptive(self):
+        r = 1.0
+        k = 1.0
+
+        def rhs(t, u):
+            return r * u * (1 - u / k)
+
+        def jac(t, u, x):
+            return r * (1 - 2 * u / k) * x
+
+        u0 = 0.1
+        t = np.linspace(0, 1, 100)
+        y = integrate(rhs, t, u0)
+        y_exp = y + np.random.normal(scale=0.05, size=y.shape)
+
+        def functional(y):
+            return np.sum((y - y_exp)**2)
+
+        def dfunc_dy(y):
+            return 2 * (y - y_exp)
+
+        y = integrate_adaptive(rhs, jac, dfunc_dy, t, u0, tol=1e-6)
+        analytic = k / (1 + (k / u0 - 1) * np.exp(-r * t))\
+            .reshape(-1, 1)
+        np.testing.assert_allclose(
+            functional(analytic), functional(y), rtol=1e-6, atol=0
+        )
+
     def test_logistic_adjoint_sensitivities(self):
         r = 1.0
         k = 1.0
@@ -203,7 +233,7 @@ class TestGlobalError(unittest.TestCase):
         def dfunc_dy(y):
             return 2 * (y - y_exp)
 
-        error = adjoint_error(
+        error, _ = adjoint_error(
             rhs, jac, dfunc_dy, t, y
         )
 
