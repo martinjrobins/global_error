@@ -277,16 +277,72 @@ class TestGlobalError(unittest.TestCase):
 
 
     def test_adjoint_error(self):
-        adjoint_error(
-            rhs, jac, dfunc_dy, ftimes, times, y
+        r = 1.0
+        k = 1.0
+
+        def rhs(t, u):
+            return r * u * (1 - u / k)
+
+        def jac(t, u, x):
+            return r * (1 - 2 * u / k) * x
+
+        def drhs_dp(t, u, x):
+            return np.array([
+                u * (1 - u / k),
+                r * u**2 / k**2,
+            ]).dot(x)
+
+        u0 = 0.1
+        t = np.linspace(0, 10.0, 20)
+        y = integrate(rhs, t, u0)
+
+        ft = np.linspace(0, 1, 33)
+        fy = interpolate(y, t, rhs, ft)
+        analytic = k / (1 + (k / u0 - 1) * np.exp(-r * ft))\
+            .reshape(-1, 1)
+        y_exp = fy + np.random.normal(scale=0.05, size=fy.shape)
+
+        def functional(y):
+            return np.sum((y - y_exp)**2)
+
+        def dfunc_dy(y):
+            return 2 * (y - y_exp)
+
+        error, _ = adjoint_error(
+            rhs, jac, dfunc_dy, ft, t, y
         )
-        pass
+
+        np.testing.assert_allclose(
+            functional(fy) - functional(analytic),
+            error, rtol=2e-3, atol=0
+        )
+
+        ft = np.linspace(0, 1, 133)
+        fy = interpolate(y, t, rhs, ft)
+        analytic = k / (1 + (k / u0 - 1) * np.exp(-r * ft))\
+            .reshape(-1, 1)
+        y_exp = fy + np.random.normal(scale=0.05, size=fy.shape)
+
+        def functional(y):
+            return np.sum((y - y_exp)**2)
+
+        def dfunc_dy(y):
+            return 2 * (y - y_exp)
+
+        error, _ = adjoint_error(
+            rhs, jac, dfunc_dy, ft, t, y
+        )
+
+        np.testing.assert_allclose(
+            functional(fy) - functional(analytic),
+            error, rtol=2e-3, atol=0
+        )
 
 
     def test_adaptive_integrate(self):
-        integrate_adaptive(
-            rhs, jac, dfunc_dy, ftimes, y0, tol=1e-6
-        )
+        #integrate_adaptive(
+        #    rhs, jac, dfunc_dy, ftimes, y0, tol=1e-6
+        #)
         pass
 
 

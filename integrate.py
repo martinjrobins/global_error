@@ -48,6 +48,10 @@ def interpolate(y, times, rhs, new_times):
         while new_t0 <= t1:
             y_out[j] = y_interp(new_t0)
             j += 1
+
+            if j == len(new_times):
+                return y_out
+
             new_t0 = new_times[j]
 
     return y_out
