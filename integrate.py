@@ -25,6 +25,33 @@ def integrate(rhs, times, y0, args=(), method=runge_kutta4):
         y[i+1] = method(rhs, t0, t1-t0, y[i], args)
     return y
 
+def interpolate(y, times, rhs, new_times):
+    n = y.shape[1]
+    y_out = np.empty((len(new_times), n), dtype=y.dtype)
+
+    # this is the index into new_times
+    j = 0
+    for i, t in enumerate(times[:-1]):
+        t0 = times[i]
+        t1 = times[i+1]
+        new_t0 = new_times[j]
+
+        if new_t0 > t1:
+            continue
+
+        # construct interpolator
+        y_interp = CubicHermiteInterpolate(
+            t0, t1, y[i], y[i+1], rhs(t0, y[i]), rhs(t1, y[i+1])
+        )
+
+        # interpolate
+        while new_t0 <= t1:
+            y_out[j] = y_interp(new_t0)
+            j += 1
+            new_t0 = new_times[j]
+
+
+
 def integrate_adaptive(
         rhs, jac, dfunc_dy, ftimes, y0, tol=1e-6
 ):
@@ -50,30 +77,52 @@ def integrate_adaptive(
                 (rhs(t, y_interp(t)) - y_interp.grad(t)) * phi,
             ))
 
-        Ju = dfunc_dy(y)
-        if Ju.shape[0] != T:
-            raise RuntimeError(
-                'dfunc_dy (shape={}) should return length {}'
-                .format(Ju.shape, T)
-            )
         phi_error = np.zeros(n + 1, dtype=y.dtype)
         error = np.empty(T-1, dtype=y.dtype)
+
+        # this is index into ftimes
+        j = len(ftimes) - 1
         for i in reversed(range(len(times)-1)):
-            # integrate over delta function
-            phi_error[:n] += Ju[i+1]
 
             t0 = times[i]
             t1 = times[i+1]
+            ft = ftimes[j]
+            t = t1
+            phi_error1 = phi_error[-1]
 
             y_interp = CubicHermiteInterpolate(
                 t0, t1, y[i], y[i+1], rhs(t0, y[i]), rhs(t1, y[i+1])
             )
 
-            # integrate
-            new_phi_error = method(adjoint_error,
-                                   t1, t0-t1, phi_error, (y_interp,))
-            error[i] = new_phi_error[-1] - phi_error[-1]
-            phi_error = new_phi_error
+            # ft could be == to t1
+            if ft >= t:
+                phi_error[:n] += Ju[j]
+                j -= 1
+                ft = ftimes[j]
+
+            # break segment according to location of ftimes
+            while ft > t0:
+                # integrate
+                phi_error = method(adjoint_error,
+                                   t, ft-t,
+                                   phi_error, (y_interp,))
+
+                # integrate over delta function
+                phi_error[:n] += dfunc_dy(y_interp(ft), j)
+
+                # go to new time point
+                j -= 1
+                t = ft
+                ft = ftimes[j]
+
+            # ft is now <= to t0, integrate to t0
+            phi_error = method(adjoint_error,
+                               t, t0-t,
+                               phi_error, (y_interp,))
+            error[i] = phi_error[-1] - phi_error1
+
+        # record total error
+        total_error = phi_error[-1]
 
         print('error {}'.format(total_error))
         if total_error > tol:
