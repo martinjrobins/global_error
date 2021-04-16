@@ -109,14 +109,15 @@ def adjoint_error(
 ):
 
     T = len(times)
+    fT = len(ftimes)
     n = y.shape[1]
 
     # calculate the derivative of the function wrt y
     Ju = dfunc_dy(interpolate(y, times, rhs, ftimes))
-    if Ju.shape[0] != T:
+    if Ju.shape[0] != fT:
         raise RuntimeError(
             'dfunc_dy (shape={}) should return length {}'
-            .format(Ju.shape, T)
+            .format(Ju.shape, fT)
         )
 
     # define the adjoint error equations
