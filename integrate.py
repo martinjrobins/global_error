@@ -50,6 +50,7 @@ def interpolate(y, times, rhs, new_times):
             j += 1
             new_t0 = new_times[j]
 
+    return y_out
 
 
 def integrate_adaptive(
@@ -70,61 +71,15 @@ def integrate_adaptive(
         print(times)
         y = integrate(rhs, times, y0, method=runge_kutta4)
 
-        def adjoint_error(t, phi_error, y_interp):
-            phi = phi_error[:n]
-            return np.concatenate((
-                -jac(t, y_interp(t), phi),
-                (rhs(t, y_interp(t)) - y_interp.grad(t)) * phi,
-            ))
-
-        phi_error = np.zeros(n + 1, dtype=y.dtype)
-        error = np.empty(T-1, dtype=y.dtype)
-
-        # this is index into ftimes
-        j = len(ftimes) - 1
-        for i in reversed(range(len(times)-1)):
-
-            t0 = times[i]
-            t1 = times[i+1]
-            ft = ftimes[j]
-            t = t1
-            phi_error1 = phi_error[-1]
-
-            y_interp = CubicHermiteInterpolate(
-                t0, t1, y[i], y[i+1], rhs(t0, y[i]), rhs(t1, y[i+1])
-            )
-
-            # ft could be == to t1
-            if ft >= t:
-                phi_error[:n] += Ju[j]
-                j -= 1
-                ft = ftimes[j]
-
-            # break segment according to location of ftimes
-            while ft > t0:
-                # integrate
-                phi_error = method(adjoint_error,
-                                   t, ft-t,
-                                   phi_error, (y_interp,))
-
-                # integrate over delta function
-                phi_error[:n] += dfunc_dy(y_interp(ft), j)
-
-                # go to new time point
-                j -= 1
-                t = ft
-                ft = ftimes[j]
-
-            # ft is now <= to t0, integrate to t0
-            phi_error = method(adjoint_error,
-                               t, t0-t,
-                               phi_error, (y_interp,))
-            error[i] = phi_error[-1] - phi_error1
-
-        # record total error
-        total_error = phi_error[-1]
-
+        total_error, error = adjoint_error(
+            rhs, jac, dfunc_dy, ftimes, times, y
+        )
         print('error {}'.format(total_error))
+
+        # if the error is above tolerance:
+        # - split those segments that have an error > (tol / T)
+        # - (TODO) join segments whose combined error < alpha * (tol / T)
+        # alpha = 0.1
         if total_error > tol:
             print('splitting')
             split = error > tol / T
@@ -145,7 +100,74 @@ def integrate_adaptive(
 
     return y
 
+def adjoint_error(
+        rhs, jac, dfunc_dy, ftimes, times, y, method=runge_kutta5
+):
 
+    T = len(times)
+    n = y.shape[1]
+
+    # calculate the derivative of the function wrt y
+    Ju = dfunc_dy(interpolate(y, times, rhs, ftimes))
+    if Ju.shape[0] != T:
+        raise RuntimeError(
+            'dfunc_dy (shape={}) should return length {}'
+            .format(Ju.shape, T)
+        )
+
+    # define the adjoint error equations
+    def adjoint_error(t, phi_error, y_interp):
+        phi = phi_error[:n]
+        return np.concatenate((
+            -jac(t, y_interp(t), phi),
+            (rhs(t, y_interp(t)) - y_interp.grad(t)) * phi,
+        ))
+
+    phi_error = np.zeros(n + 1, dtype=y.dtype)
+    error = np.empty(T-1, dtype=y.dtype)
+
+    # this is index into ftimes
+    j = len(ftimes) - 1
+    for i in reversed(range(len(times)-1)):
+
+        t0 = times[i]
+        t1 = times[i+1]
+        ft = ftimes[j]
+        t = t1
+        phi_error1 = phi_error[-1]
+
+        y_interp = CubicHermiteInterpolate(
+            t0, t1, y[i], y[i+1], rhs(t0, y[i]), rhs(t1, y[i+1])
+        )
+
+        # ft could be == to t1
+        if ft >= t:
+            phi_error[:n] += Ju[j]
+            j -= 1
+            ft = ftimes[j]
+
+        # break segment according to location of ftimes
+        while ft > t0:
+            # integrate
+            phi_error = method(adjoint_error,
+                               t, ft-t,
+                               phi_error, (y_interp,))
+
+            # integrate over delta function
+            phi_error[:n] += Ju[j]
+
+            # go to new time point
+            j -= 1
+            t = ft
+            ft = ftimes[j]
+
+        # ft is now <= to t0, integrate to t0
+        phi_error = method(adjoint_error,
+                           t, t0-t,
+                           phi_error, (y_interp,))
+        error[i] = phi_error[-1] - phi_error1
+
+    return phi_error[-1], error
 
 
 def adjoint_sensitivities(
@@ -193,7 +215,7 @@ def adjoint_sensitivities(
     return phi_dJdp[n:]
 
 
-def adjoint_error(
+def adjoint_error_single_times(
         rhs, jac, dfunc_dy, times, y, method=runge_kutta5
 ):
     T = len(times)

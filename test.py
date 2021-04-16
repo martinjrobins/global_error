@@ -1,7 +1,9 @@
 from integrate import (
     integrate,
+    interpolate,
     integrate_adaptive,
     adjoint_sensitivities,
+    adjoint_error_single_times,
     adjoint_error,
 )
 from interpolate import CubicHermiteInterpolate
@@ -200,7 +202,7 @@ class TestGlobalError(unittest.TestCase):
             dfdp, rtol=1e-6, atol=0
         )
 
-    def test_logistic_adjoint_error(self):
+    def test_logistic_adjoint_error_single_times(self):
         r = 1.0
         k = 1.0
 
@@ -233,7 +235,7 @@ class TestGlobalError(unittest.TestCase):
         def dfunc_dy(y):
             return 2 * (y - y_exp)
 
-        error, _ = adjoint_error(
+        error, _ = adjoint_error_single_times(
             rhs, jac, dfunc_dy, t, y
         )
 
@@ -241,6 +243,51 @@ class TestGlobalError(unittest.TestCase):
             functional(y) - functional(analytic),
             error, rtol=2e-3, atol=0
         )
+
+    def test_interpolate(self):
+        r = 1.0
+        k = 1.0
+
+        def rhs(t, u):
+            return r * u * (1 - u / k)
+
+        u0 = 0.1
+        t = np.linspace(0, 1, 100)
+        y = integrate(rhs, t, u0)
+
+        interp_t = np.linspace(0, 1, 33)
+        interp_y = interpolate(y, t, rhs, interp_t)
+
+        analytic = k / (1 + (k / u0 - 1) * np.exp(-r * interp_t))\
+            .reshape(-1, 1)
+
+        np.testing.assert_allclose(
+            analytic, interp_y, rtol=1e-5, atol=0
+        )
+
+        interp_t = np.linspace(0, 1, 133)
+        interp_y = interpolate(y, t, rhs, interp_t)
+
+        analytic = k / (1 + (k / u0 - 1) * np.exp(-r * interp_t))\
+            .reshape(-1, 1)
+
+        np.testing.assert_allclose(
+            analytic, interp_y, rtol=1e-5, atol=0
+        )
+
+
+    def test_adjoint_error(self):
+        adjoint_error(
+            rhs, jac, dfunc_dy, ftimes, times, y
+        )
+        pass
+
+
+    def test_adaptive_integrate(self):
+        integrate_adaptive(
+            rhs, jac, dfunc_dy, ftimes, y0, tol=1e-6
+        )
+        pass
 
 
 if __name__ == '__main__':
