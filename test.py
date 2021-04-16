@@ -319,10 +319,47 @@ class TestGlobalError(unittest.TestCase):
             )
 
     def test_adaptive_integrate(self):
-        #integrate_adaptive(
-        #    rhs, jac, dfunc_dy, ftimes, y0, tol=1e-6
+        r = 1.0
+        k = 1.0
+
+        def rhs(t, u):
+            return r * u * (1 - u / k)
+
+        def jac(t, u, x):
+            return r * (1 - 2 * u / k) * x
+
+        def drhs_dp(t, u, x):
+            return np.array([
+                u * (1 - u / k),
+                r * u**2 / k**2,
+            ]).dot(x)
+
+        u0 = 0.1
+        ft = np.linspace(0, 10.0, 13)
+        fanalytic = k / (1 + (k / u0 - 1) * np.exp(-r * ft))\
+            .reshape(-1, 1)
+        y_exp = fanalytic + np.random.normal(scale=0.05, size=fanalytic.shape)
+
+        def functional(y):
+            return np.sum((y - y_exp)**2)
+
+        def dfunc_dy(y):
+            return 2 * (y - y_exp)
+
+
+        y, t = integrate_adaptive(
+            rhs, jac, dfunc_dy, ft, u0, tol=1e-6
+        )
+
+        fy = interpolate(y, t, rhs, ft)
+
+        #np.testing.assert_allclose(
+        #    fy, fanalytic, rtol=1e-5, atol=0
         #)
-        pass
+
+        np.testing.assert_allclose(
+            functional(fy), functional(fanalytic), rtol=1e-6, atol=0
+        )
 
 
 if __name__ == '__main__':

@@ -66,7 +66,7 @@ def integrate_adaptive(
         raise TypeError('y0 should be a number or ndarray')
 
     total_error = 2*tol
-    times = np.linspace(ftimes[0], ftimes[-1], 1)
+    times = np.linspace(ftimes[0], ftimes[-1], 2)
 
     while total_error > tol:
         T = len(times)
@@ -79,6 +79,7 @@ def integrate_adaptive(
             rhs, jac, dfunc_dy, ftimes, times, y
         )
         print('error {}'.format(total_error))
+        print(error)
 
         # if the error is above tolerance:
         # - split those segments that have an error > (tol / T)
@@ -97,12 +98,13 @@ def integrate_adaptive(
                 if split[i]:
                     new_times[index] = 0.5*(times[i] + times[i+1])
                     index += 1
+            new_times[-1] = times[-1]
             times = new_times
 
             print('new times')
             print(times)
 
-    return y
+    return y, times
 
 def adjoint_error(
         rhs, jac, dfunc_dy, ftimes, times, y, method=runge_kutta5
