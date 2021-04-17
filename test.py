@@ -16,6 +16,7 @@ from runge_kutta import (
     runge_kutta4,
     runge_kutta41,
 )
+import scipy.integrate
 
 
 class TestGlobalError(unittest.TestCase):
@@ -309,13 +310,13 @@ class TestGlobalError(unittest.TestCase):
             def dfunc_dy(y):
                 return 2 * (y - y_exp)
 
-            error, errors = adjoint_error(
-                rhs, jac, dfunc_dy, ft, t, y
+            error, errors, f, _, _ = adjoint_error(
+                rhs, jac, functional, dfunc_dy, ft, t, y
             )
 
             np.testing.assert_allclose(
-                functional(fy) - functional(analytic),
-                error, rtol=2e-2, atol=0
+                f - functional(analytic),
+                error, rtol=7e-2, atol=1e-8
             )
 
     def test_adaptive_integrate(self):
@@ -328,38 +329,54 @@ class TestGlobalError(unittest.TestCase):
         def jac(t, u, x):
             return r * (1 - 2 * u / k) * x
 
-        def drhs_dp(t, u, x):
-            return np.array([
-                u * (1 - u / k),
-                r * u**2 / k**2,
-            ]).dot(x)
-
         u0 = 0.1
-        ft = np.linspace(0, 10.0, 13)
-        fanalytic = k / (1 + (k / u0 - 1) * np.exp(-r * ft))\
-            .reshape(-1, 1)
-        y_exp = fanalytic + np.random.normal(scale=0.05, size=fanalytic.shape)
+        np.random.seed(0)
+        for fn in [2, 5, 7, 13, 133]:
+            ft = np.linspace(0, 10.0, fn)
+            k_exp = k * 0.9
+            r_exp = r * 0.9
+            analytic_exp = k_exp / (1 + (k_exp / u0 - 1) * np.exp(-r_exp * ft))\
+                .reshape(-1, 1)
+            y_exp = analytic_exp + np.random.normal(scale=0.05, size=analytic_exp.shape)
+            fanalytic = k / (1 + (k / u0 - 1) * np.exp(-r * ft))\
+                .reshape(-1, 1)
 
-        def functional(y):
-            return np.sum((y - y_exp)**2)
+            def functional(y):
+                return np.sum((y - y_exp)**2)
 
-        def dfunc_dy(y):
-            return 2 * (y - y_exp)
+            def dfunc_dy(y):
+                return 2 * (y - y_exp)
 
 
-        y, t = integrate_adaptive(
-            rhs, jac, dfunc_dy, ft, u0, tol=1e-6
-        )
+            y, t, f, rhs_eval, jac_eval = integrate_adaptive(
+                rhs, jac, functional, dfunc_dy, ft, u0, rtol=1e-4
+            )
+            print('rhs_eval = {}, jac_eval = {}'.format(
+                rhs_eval, jac_eval))
 
-        fy = interpolate(y, t, rhs, ft)
+            sol = scipy.integrate.solve_ivp(
+                rhs, (ft[0], ft[-1]), y0=[u0], rtol=1e-6
+            )
+            fsol = functional(interpolate(sol.y.T, sol.t, rhs, ft))
+            print('scipy: rhs_eval = {}, jac_eval = {}'.format(
+                sol.nfev, sol.njev))
 
-        #np.testing.assert_allclose(
-        #    fy, fanalytic, rtol=1e-5, atol=0
-        #)
 
-        np.testing.assert_allclose(
-            functional(fy), functional(fanalytic), rtol=1e-6, atol=0
-        )
+
+            print(len(t), len(sol.t))
+            print('scipy error',
+                 (fsol - functional(fanalytic)) / functional(fanalytic)
+            )
+            print('my error',
+                 (f - functional(fanalytic)) / functional(fanalytic)
+            )
+            plt.plot(t, y, '.')
+            plt.plot(sol.t, sol.y.reshape(-1), '.')
+            plt.show()
+
+            np.testing.assert_allclose(
+                f, functional(fanalytic), rtol=1e-4, atol=0
+            )
 
 
 if __name__ == '__main__':
