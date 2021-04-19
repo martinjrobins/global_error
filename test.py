@@ -465,7 +465,7 @@ class TestGlobalError(unittest.TestCase):
         minimise_trad = MinimiseTraditional(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, [u0],
-            rtol=1e-4, atol=1e-6
+            rtol=1e-5, atol=1e-6
         )
 
         t0 = time.perf_counter()
