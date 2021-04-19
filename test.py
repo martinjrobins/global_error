@@ -2,9 +2,10 @@ from integrate import (
     integrate,
     interpolate,
     integrate_adaptive,
-    adjoint_sensitivities,
+    adjoint_sensitivities_single_times,
     adjoint_error_single_times,
     adjoint_error,
+    Minimise, MinimiseTraditional, MinimiseTraditionalNoGradient
 )
 from interpolate import CubicHermiteInterpolate
 import jax.numpy as jnp
@@ -17,6 +18,17 @@ from runge_kutta import (
     runge_kutta41,
 )
 import scipy.integrate
+import time
+
+class CountCalls:
+    def __init__(self, func):
+        self.func = func
+        self.count = 0
+
+    def __call__(self, *args):
+        self.count += 1
+        return self.func(*args)
+
 
 
 class TestGlobalError(unittest.TestCase):
@@ -186,7 +198,7 @@ class TestGlobalError(unittest.TestCase):
         def dfunc_dy(y):
             return 2 * (y - y_exp)
 
-        dfdp = adjoint_sensitivities(
+        dfdp = adjoint_sensitivities_single_times(
             rhs, jac, drhs_dp, dfunc_dy, t, y
         )
 
@@ -297,6 +309,7 @@ class TestGlobalError(unittest.TestCase):
         t = np.linspace(0, 10.0, 20)
         y = integrate(rhs, t, u0)
 
+        np.random.seed(0)
         for ntimes in [13, 23]:
             ft = np.linspace(0, 10.0, ntimes)
             fy = interpolate(y, t, rhs, ft)
@@ -370,13 +383,154 @@ class TestGlobalError(unittest.TestCase):
             print('my error',
                  (f - functional(fanalytic)) / functional(fanalytic)
             )
-            plt.plot(t, y, '.')
-            plt.plot(sol.t, sol.y.reshape(-1), '.')
-            plt.show()
+            #plt.plot(t, y, '.', label='mine')
+            #plt.plot(sol.t, sol.y.reshape(-1), '.', label='scipy')
+            #plt.legend()
+            #plt.show()
 
             np.testing.assert_allclose(
-                f, functional(fanalytic), rtol=1e-4, atol=0
+                f, functional(fanalytic), rtol=2e-4, atol=0
             )
+
+
+
+    def test_minimise(self):
+        def analytic(t, p, u0):
+            return (
+                p[1] / (1 + (p[1]/ u0 - 1) * np.exp(-p[0] * t))
+            ).reshape(-1, 1)
+
+        def rhs(t, u, p):
+            return p[0] * u * (1 - u / p[1])
+
+        def jac(t, u, x, p):
+            return p[0] * (1 - 2 * u / p[1]) * x
+
+        def drhs_dp(t, u, x, p):
+            return np.array([
+                u * (1 - u / p[1]),
+                p[0] * u**2 / p[1]**2,
+            ]).dot(x)
+
+        u0 = 0.1
+        np.random.seed(0)
+        fn = 13
+        ft = np.linspace(0, 12.0, fn)
+        k_exp = 0.9
+        r_exp = 0.9
+        p0 = [0.5, 1.5]
+        bounds = [(0, None), (0, None)]
+        analytic_exp = analytic(ft, (r_exp, k_exp), u0)
+        y_exp = analytic_exp + np.random.normal(scale=0.05, size=analytic_exp.shape)
+
+        def functional(y):
+            return np.sum((y - y_exp)**2)
+
+        def dfunc_dy(y):
+            return 2 * (y - y_exp)
+
+        rhs_tracked = CountCalls(rhs)
+        jac_tracked = CountCalls(jac)
+        minimise_adapt = Minimise(
+            rhs_tracked, jac_tracked,
+            drhs_dp, functional, dfunc_dy, ft, u0,
+            rtol=1e-4, atol=1e-6
+        )
+
+        t0 = time.perf_counter()
+        res = scipy.optimize.minimize(
+            minimise_adapt, p0, jac=True, bounds=bounds
+        )
+        t1 = time.perf_counter()
+        print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
+            res.x, rhs_tracked.count, jac_tracked.count, t1-t0
+        ))
+        analytic_fit = analytic(ft, res.x, u0)
+
+        plt.clf()
+        plt.plot(ft, analytic_fit, '-', label='fit')
+        plt.plot(ft, y_exp, '.', label='data')
+        plt.xlabel('t')
+        plt.ylabel('y')
+        plt.title(
+            'adaptive minimiser (#rhs = {}, #jac = {})'.format(
+                rhs_tracked.count, jac_tracked.count
+            )
+        )
+        plt.legend()
+        plt.savefig('test_minimise_adaptive_fit.pdf')
+
+        rhs_tracked = CountCalls(rhs)
+        jac_tracked = CountCalls(jac)
+        minimise_trad = MinimiseTraditional(
+            rhs_tracked, jac_tracked,
+            drhs_dp, functional, dfunc_dy, ft, [u0],
+            rtol=1e-4, atol=1e-6
+        )
+
+        t0 = time.perf_counter()
+        res = scipy.optimize.minimize(
+            minimise_trad, p0, jac=True, bounds=bounds
+        )
+        t1 = time.perf_counter()
+        print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
+            res.x, rhs_tracked.count, jac_tracked.count, t1-t0
+        ))
+        analytic_fit = analytic(ft, res.x, u0)
+
+        plt.clf()
+        plt.plot(ft, analytic_fit, '-', label='fit')
+        plt.plot(ft, y_exp, '.', label='data')
+        plt.xlabel('t')
+        plt.ylabel('y')
+        plt.title(
+            'adaptive minimiser (#rhs = {}, #jac = {})'.format(
+                rhs_tracked.count, jac_tracked.count
+            )
+        )
+        plt.legend()
+        plt.savefig('test_minimise_traditional_fit.pdf')
+
+
+        plt.clf()
+        plt.subplot(1, 2, 1)
+        plt.semilogy(np.abs(minimise_adapt.total_error), '-',
+                 label='adaptive')
+        plt.semilogy(np.abs(minimise_trad.total_error), '-',
+                 label='traditional')
+        plt.xlabel('function eval #')
+        plt.ylabel('total error using adjoint')
+        plt.subplot(1, 2, 2)
+        plt.plot(minimise_adapt.ntimes, '-',
+                 label='adapt')
+        plt.plot(minimise_trad.ntimes, '-',
+                 label='traditional')
+        plt.xlabel('function eval #')
+        plt.ylabel('# time points for ode solve')
+        plt.legend()
+        plt.savefig('test_minimise_comparison.pdf')
+
+        rhs_tracked = CountCalls(rhs)
+        jac_tracked = CountCalls(jac)
+        minimise_trad_no_grad = MinimiseTraditionalNoGradient(
+            rhs_tracked, jac_tracked,
+            drhs_dp, functional, dfunc_dy, ft, [u0],
+            rtol=1e-4, atol=1e-6
+        )
+        t0 = time.perf_counter()
+        res = scipy.optimize.minimize(
+            minimise_trad_no_grad, p0, bounds=bounds
+        )
+        t1 = time.perf_counter()
+        print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
+            res.x, rhs_tracked.count, jac_tracked.count, t1-t0
+        ))
+
+
+
+
+
+
 
 
 if __name__ == '__main__':
