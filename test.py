@@ -473,7 +473,7 @@ class TestGlobalError(unittest.TestCase):
 
         u0 = 0.01
         np.random.seed(0)
-        fn = 13
+        fn = 5
         ft = np.linspace(0, 12.0, fn)
         k_exp = 0.9
         r_exp = 1.9
@@ -493,7 +493,7 @@ class TestGlobalError(unittest.TestCase):
         minimise_adapt = Minimise(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, u0,
-            rtol=1e-3, atol=1e-4
+            rtol=1e-3, atol=1e-6
         )
 
         t0 = time.perf_counter()
@@ -524,7 +524,7 @@ class TestGlobalError(unittest.TestCase):
         minimise_trad = MinimiseTraditional(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, [u0],
-            rtol=1e-6, atol=1e-5
+            rtol=1e-5, atol=1e-5
         )
 
         t0 = time.perf_counter()
@@ -553,10 +553,12 @@ class TestGlobalError(unittest.TestCase):
 
         plt.clf()
         plt.subplot(1, 2, 1)
-        plt.semilogy(np.abs(minimise_adapt.total_error), '-',
-                 label='adaptive')
-        plt.semilogy(np.abs(minimise_trad.total_error), '-',
-                 label='traditional')
+        plt.semilogy(
+            np.abs(np.array(minimise_adapt.total_error) / minimise_adapt.f_evals),
+            '-', label='adaptive')
+        plt.semilogy(
+            np.abs(np.array(minimise_trad.total_error) / minimise_trad.f_evals),
+            '-', label='traditional')
         plt.xlabel('function eval #')
         plt.ylabel('total error using adjoint')
         plt.subplot(1, 2, 2)
