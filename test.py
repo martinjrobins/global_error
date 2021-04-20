@@ -5,7 +5,8 @@ from integrate import (
     adjoint_sensitivities_single_times,
     adjoint_error_single_times,
     adjoint_error, adjoint_error_and_sensitivities,
-    Minimise, MinimiseTraditional, MinimiseTraditionalNoGradient
+    Minimise, MinimiseTraditional, MinimiseTraditionalNoGradient,
+    MinimiseNonFixed, MinimiseMaxAdapt
 )
 from interpolate import CubicHermiteInterpolate
 import jax.numpy as jnp
@@ -473,8 +474,8 @@ class TestGlobalError(unittest.TestCase):
 
         u0 = 0.01
         np.random.seed(0)
-        fn = 5
-        ft = np.linspace(0, 12.0, fn)
+        fn = 18
+        ft = np.linspace(0, 6.0, fn)
         k_exp = 0.9
         r_exp = 1.9
         p0 = [0.5, 1.5]
@@ -493,7 +494,7 @@ class TestGlobalError(unittest.TestCase):
         minimise_adapt = Minimise(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, u0,
-            rtol=1e-3, atol=1e-6
+            rtol=1e-4, atol=1e-5
         )
 
         t0 = time.perf_counter()
@@ -524,7 +525,7 @@ class TestGlobalError(unittest.TestCase):
         minimise_trad = MinimiseTraditional(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, [u0],
-            rtol=1e-5, atol=1e-5
+            rtol=1e-4, atol=1e-5
         )
 
         t0 = time.perf_counter()

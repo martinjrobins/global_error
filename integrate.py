@@ -6,6 +6,7 @@ import numbers
 from runge_kutta import (
     runge_kutta4,
     runge_kutta5,
+    runge_kutta41,
 )
 from interpolate import CubicHermiteInterpolate
 
@@ -58,7 +59,7 @@ def interpolate(y, times, rhs, new_times, args=()):
 
     return y_out
 
-def adapt(error, times, fix_times, thresh, alpha=0.5):
+def adapt(error, times, fix_times, thresh, alpha=0.1):
     # if the error is above tolerance:
     # - split those segments that have an error > thresh
     # - join segments whose combined error < alpha * thresh
@@ -66,6 +67,8 @@ def adapt(error, times, fix_times, thresh, alpha=0.5):
     print(thresh, error)
     split = np.abs(error) > thresh
     join = (np.abs(error[:-1]) + np.abs(error[1:])) < alpha * thresh
+    print(split)
+    print(join)
     T = len(times) + np.sum(split)
     new_times = np.empty(T, dtype=times.dtype)
     new_fix_times = np.empty(T, dtype=fix_times.dtype)
@@ -85,6 +88,8 @@ def adapt(error, times, fix_times, thresh, alpha=0.5):
 
     new_times[index] = times[-1]
     new_fix_times[index] = fix_times[-1]
+    print(times)
+    print(new_times[:index+1])
     return np.resize(new_times, index+1), \
         np.resize(new_fix_times, index+1)
 
@@ -187,7 +192,7 @@ class Minimise:
         # integrate ode
         while True:
             y = integrate(self.rhs, self.times, self.y0,
-                          args=(p,), method=runge_kutta4)
+                          args=(p,), method=runge_kutta41)
 
             if not np.isinf(y).any():
                 break
@@ -205,9 +210,64 @@ class Minimise:
         )
 
         # adapt
-        thresh = f * self.rtol + self.atol
-        if abs(total_error) > thresh or \
-                abs(total_error) < 0.1 * thresh:
+        thresh = abs(f * self.rtol + self.atol)
+        self.times, self.fix_times = adapt(
+            error, self.times, self.fix_times,
+            thresh
+        )
+
+        self.total_error.append(total_error)
+        self.ntimes.append(len(self.times))
+        self.f_evals.append(f)
+        self.g_evals.append(g)
+
+        return f, g
+
+class MinimiseMaxAdapt:
+    def __init__(self, rhs, jac, drhs_dp, funcional,
+                 dfunc_dy, ftimes, y0, rtol=1e-4, atol=1e-6):
+        self.ftimes = ftimes
+        self.functional = funcional
+        self.dfunc_dy = dfunc_dy
+        self.times = self.ftimes
+        self.fix_times = np.ones(len(self.times), dtype=bool)
+        self.rhs = rhs
+        self.drhs_dp = drhs_dp
+        self.jac = jac
+        self.y0 = y0
+        self.rtol = rtol
+        self.atol = atol
+
+        self.total_error = []
+        self.f_evals = []
+        self.g_evals = []
+        self.ntimes = []
+
+    def __call__(self, p):
+        # integrate ode
+        while True:
+            y = integrate(self.rhs, self.times, self.y0,
+                          args=(p,), method=runge_kutta41)
+
+            if np.isinf(y).any():
+                self.times, self.fix_times = adapt(
+                    np.full(len(self.times) - 1, np.inf),
+                    self.times, self.fix_times, 1
+                )
+                continue
+
+            # calculate error and sensitivities
+            total_error, error, f, g = adjoint_error_and_sensitivities(
+                self.rhs, self.jac, self.drhs_dp, self.functional,
+                self.dfunc_dy, self.fix_times, self.times,
+                y, args=(p,)
+            )
+
+            thresh = abs(f * self.rtol + self.atol)
+            if abs(total_error) < thresh:
+                break
+
+            # adapt
             self.times, self.fix_times = adapt(
                 error, self.times, self.fix_times,
                 thresh / len(self.times)
@@ -219,6 +279,68 @@ class Minimise:
         self.g_evals.append(g)
 
         return f, g
+
+
+
+class MinimiseNonFixed:
+    def __init__(self, rhs, jac, drhs_dp, funcional,
+                 dfunc_dy, ftimes, y0, rtol=1e-4, atol=1e-6):
+        self.ftimes = ftimes
+        self.functional = funcional
+        self.dfunc_dy = dfunc_dy
+        self.times = self.ftimes
+        self.rhs = rhs
+        self.drhs_dp = drhs_dp
+        self.jac = jac
+        self.y0 = y0
+        self.rtol = rtol
+        self.atol = atol
+
+        self.total_error = []
+        self.f_evals = []
+        self.g_evals = []
+        self.ntimes = []
+
+    def __call__(self, p):
+        # integrate ode
+        while True:
+            y = integrate(self.rhs, self.times, self.y0,
+                          args=(p,), method=runge_kutta41)
+
+            if not np.isinf(y).any():
+                break
+
+            self.times, self.fix_times = adapt(
+                np.full(len(self.times) - 1, np.inf),
+                self.times, self.fix_times, 1
+            )
+
+        # calculate error and sensitivities
+        fy = interpolate(y, self.times, self.rhs, self.ftimes,
+                         args=(p,))
+        total_error, error, f, g = \
+            adjoint_error_and_sensitivities_independent_ftimes(
+                self.rhs, self.jac, self.drhs_dp, self.functional,
+                self.dfunc_dy, fy, self.ftimes, self.times,
+                y, args=(p,)
+            )
+
+        # adapt
+        fix_times = np.zeros(len(self.times), dtype=bool)
+        thresh = f * self.rtol + self.atol
+        self.times, self.fix_times = adapt(
+            error, self.times, fix_times,
+            thresh
+        )
+
+        self.total_error.append(total_error)
+        self.ntimes.append(len(self.times))
+        self.f_evals.append(f)
+        self.g_evals.append(g)
+
+        return f, g
+
+
 
 
 
