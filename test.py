@@ -4,7 +4,7 @@ from integrate import (
     integrate_adaptive,
     adjoint_sensitivities_single_times,
     adjoint_error_single_times,
-    adjoint_error,
+    adjoint_error, adjoint_error_and_sensitivities,
     Minimise, MinimiseTraditional, MinimiseTraditionalNoGradient
 )
 from interpolate import CubicHermiteInterpolate
@@ -168,6 +168,10 @@ class TestGlobalError(unittest.TestCase):
     def test_logistic_adjoint_sensitivities(self):
         r = 1.0
         k = 1.0
+        def analytic(t, p, u0):
+            return (
+                p[1] / (1 + (p[1]/ u0 - 1) * np.exp(-p[0] * t))
+            ).reshape(-1, 1)
 
         def rhs(t, u):
             return r * u * (1 - u / k)
@@ -184,10 +188,9 @@ class TestGlobalError(unittest.TestCase):
         u0 = 0.1
         t = np.linspace(0, 1.0, 1000)
         y = integrate(rhs, t, u0)
-        analytic = k / (1 + (k / u0 - 1) * np.exp(-r * t))\
-            .reshape(-1, 1)
+        analytic_t = analytic(t, (r, k), u0)
         np.testing.assert_allclose(
-            analytic, y, rtol=1e-5, atol=0
+            analytic_t, y, rtol=1e-5, atol=0
         )
         np.random.seed(0)
         y_exp = y + np.random.normal(scale=0.05, size=y.shape)
@@ -215,7 +218,41 @@ class TestGlobalError(unittest.TestCase):
             dfdp, rtol=1e-6, atol=0
         )
 
-    def test_logistic_adjoint_error_single_times(self):
+        t = np.linspace(0, 12.0, 100)
+        y = integrate(rhs, t, u0)
+        ft = np.linspace(0, 12.0, 13)
+        analytic_exp = analytic(ft, (r, k), u0)
+        y_exp = analytic_exp + \
+            np.random.normal(scale=0.15, size=analytic_exp.shape)
+
+        _, _, f, g = adjoint_error_and_sensitivities(
+            rhs, jac, drhs_dp, functional, dfunc_dy, ft, t, y
+        )
+
+        analytic_dydr = k * ft * (k / u0 - 1) * np.exp(-r * ft) / \
+            ((k / u0 - 1) * np.exp(-r * ft) + 1)**2
+        analytic_dydk = -k * np.exp(-r * ft) / \
+            (u0 * ((k / u0 - 1) * np.exp(-r * ft) + 1)**2) \
+            + 1 / ((k / u0 - 1) * np.exp(-r * ft) + 1)
+        analytic_dydp = np.stack(
+            (analytic_dydr, analytic_dydk), axis=1
+        )
+        np.testing.assert_allclose(
+            np.sum(dfunc_dy(analytic_exp)*analytic_dydp, axis=0),
+            g, rtol=1e-4, atol=0
+        )
+        np.testing.assert_allclose(
+            functional(analytic_exp),
+            f, rtol=1e-6, atol=0
+        )
+
+
+    def test_logistic_adjoint_error(self):
+        def analytic(t, p, u0):
+            return (
+                p[1] / (1 + (p[1]/ u0 - 1) * np.exp(-p[0] * t))
+            ).reshape(-1, 1)
+
         r = 1.0
         k = 1.0
 
@@ -234,10 +271,10 @@ class TestGlobalError(unittest.TestCase):
         u0 = 0.1
         t = np.linspace(0, 10.0, 20)
         y = integrate(rhs, t, u0)
-        analytic = k / (1 + (k / u0 - 1) * np.exp(-r * t))\
+        analytic_t = k / (1 + (k / u0 - 1) * np.exp(-r * t))\
             .reshape(-1, 1)
         np.testing.assert_allclose(
-            analytic, y, rtol=1e-3, atol=0
+            analytic_t, y, rtol=1e-3, atol=0
         )
         np.random.seed(0)
         y_exp = y + np.random.normal(scale=0.05, size=y.shape)
@@ -253,9 +290,31 @@ class TestGlobalError(unittest.TestCase):
         )
 
         np.testing.assert_allclose(
-            functional(y) - functional(analytic),
+            functional(y) - functional(analytic_t),
             error, rtol=2e-3, atol=0
         )
+
+        t = np.linspace(0, 12.0, 15)
+        y = integrate(rhs, t, u0)
+        ft = np.linspace(0, 12.0, 13)
+        analytic_exp = analytic(ft, (r, k), u0)
+        y_exp = analytic_exp + \
+            np.random.normal(scale=0.15, size=analytic_exp.shape)
+
+        total_error, error, f, _ = adjoint_error_and_sensitivities(
+            rhs, jac, drhs_dp, functional, dfunc_dy, ft, t, y
+        )
+
+        np.testing.assert_allclose(
+            total_error, np.sum(error),
+            rtol=1e-6
+        )
+
+        np.testing.assert_allclose(
+            f - functional(analytic_exp),
+            total_error, rtol=1e-2, atol=0
+        )
+
 
     def test_interpolate(self):
         r = 1.0
@@ -412,12 +471,12 @@ class TestGlobalError(unittest.TestCase):
                 p[0] * u**2 / p[1]**2,
             ]).dot(x)
 
-        u0 = 0.1
+        u0 = 0.01
         np.random.seed(0)
         fn = 13
         ft = np.linspace(0, 12.0, fn)
         k_exp = 0.9
-        r_exp = 0.9
+        r_exp = 1.9
         p0 = [0.5, 1.5]
         bounds = [(0, None), (0, None)]
         analytic_exp = analytic(ft, (r_exp, k_exp), u0)
@@ -434,7 +493,7 @@ class TestGlobalError(unittest.TestCase):
         minimise_adapt = Minimise(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, u0,
-            rtol=1e-3, atol=1e-5
+            rtol=1e-3, atol=1e-4
         )
 
         t0 = time.perf_counter()
@@ -445,10 +504,10 @@ class TestGlobalError(unittest.TestCase):
         print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
             res.x, rhs_tracked.count, jac_tracked.count, t1-t0
         ))
-        analytic_fit = analytic(ft, res.x, u0)
+        analytic_fit = analytic(minimise_adapt.times, res.x, u0)
 
         plt.clf()
-        plt.plot(ft, analytic_fit, '-', label='fit')
+        plt.plot(minimise_adapt.times, analytic_fit, '.-', label='fit')
         plt.plot(ft, y_exp, '.', label='data')
         plt.xlabel('t')
         plt.ylabel('y')
@@ -465,7 +524,7 @@ class TestGlobalError(unittest.TestCase):
         minimise_trad = MinimiseTraditional(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, [u0],
-            rtol=1e-5, atol=1e-5
+            rtol=1e-6, atol=1e-5
         )
 
         t0 = time.perf_counter()
@@ -476,15 +535,15 @@ class TestGlobalError(unittest.TestCase):
         print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
             res.x, rhs_tracked.count, jac_tracked.count, t1-t0
         ))
-        analytic_fit = analytic(ft, res.x, u0)
+        analytic_fit = analytic(minimise_trad.times, res.x, u0)
 
         plt.clf()
-        plt.plot(ft, analytic_fit, '-', label='fit')
+        plt.plot(minimise_trad.times, analytic_fit, '.-', label='fit')
         plt.plot(ft, y_exp, '.', label='data')
         plt.xlabel('t')
         plt.ylabel('y')
         plt.title(
-            'adaptive minimiser (#rhs = {}, #jac = {})'.format(
+            'traditional minimiser (#rhs = {}, #jac = {})'.format(
                 rhs_tracked.count, jac_tracked.count
             )
         )
@@ -515,7 +574,7 @@ class TestGlobalError(unittest.TestCase):
         minimise_trad_no_grad = MinimiseTraditionalNoGradient(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, [u0],
-            rtol=1e-4, atol=1e-6
+            rtol=1e-5, atol=1e-4
         )
         t0 = time.perf_counter()
         res = scipy.optimize.minimize(

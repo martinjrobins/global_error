@@ -63,7 +63,7 @@ def adapt(error, times, thresh, alpha=0.01):
     # - split those segments that have an error > thresh
     # - join segments whose combined error < alpha * thresh
     split = np.abs(error) > thresh
-    join = np.abs(error[:-1]) + np.abs(error[1:]) < alpha * thresh
+    join = (np.abs(error[:-1]) + np.abs(error[1:])) < alpha * thresh
     T = len(times) + np.sum(split)
     new_times = np.empty(T, dtype=times.dtype)
     index = 0
@@ -185,8 +185,10 @@ class Minimise:
         )
 
         # adapt
-        self.times = adapt(error, self.times,
-                           f * self.rtol + self.atol)
+        self.times = adapt(
+            error, self.times,
+            (f * self.rtol + self.atol) / len(self.times)
+        )
 
         self.total_error.append(total_error)
         self.ntimes.append(len(self.times))
