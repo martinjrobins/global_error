@@ -503,7 +503,7 @@ class TestGlobalError(unittest.TestCase):
 
         u0 = 0.01
         np.random.seed(10)
-        fn = 106
+        fn = 10
         ft = np.linspace(0, 15.0, fn)
         k_exp = 0.9
         r_exp = 1.9
