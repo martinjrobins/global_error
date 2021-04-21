@@ -5,6 +5,7 @@ from integrate import (
     adjoint_sensitivities_single_times,
     adjoint_error_single_times,
     adjoint_error, adjoint_error_and_sensitivities,
+    adjoint_error_and_sensitivities_independent_ftimes,
     Minimise, MinimiseTraditional, MinimiseTraditionalNoGradient,
     MinimiseNonFixed, MinimiseMaxAdapt
 )
@@ -302,9 +303,11 @@ class TestGlobalError(unittest.TestCase):
         y_exp = analytic_exp + \
             np.random.normal(scale=0.15, size=analytic_exp.shape)
 
-        total_error, error, f, _ = adjoint_error_and_sensitivities(
-            rhs, jac, drhs_dp, functional, dfunc_dy, ft, t, y
-        )
+        fy = interpolate(y, t, rhs, ft)
+        total_error, error, f, _ = \
+            adjoint_error_and_sensitivities_independent_ftimes(
+                rhs, jac, drhs_dp, functional, dfunc_dy, fy, ft, t, y
+            )
 
         np.testing.assert_allclose(
             total_error, np.sum(error),
@@ -315,6 +318,32 @@ class TestGlobalError(unittest.TestCase):
             f - functional(analytic_exp),
             total_error, rtol=1e-2, atol=0
         )
+
+        errors = []
+        ns = [10, 100, 1000, 10000]
+        for n in ns:
+            t = np.linspace(0, 12.0, n)
+            y = integrate(rhs, t, u0)
+            ft = np.linspace(0, 12.0, 13)
+            analytic_exp = analytic(ft, (r, k), u0)
+            y_exp = analytic_exp + \
+                np.random.normal(scale=0.15, size=analytic_exp.shape)
+
+            fy = interpolate(y, t, rhs, ft)
+            total_error, error, f, _ = \
+                adjoint_error_and_sensitivities_independent_ftimes(
+                    rhs, jac, drhs_dp, functional, dfunc_dy, fy, ft, t, y
+                )
+            errors.append(total_error/f)
+
+        print(errors)
+        plt.loglog(ns, np.abs(errors))
+        plt.loglog(ns, np.array(ns, dtype=float)**(-4), label='n^-4')
+        plt.legend()
+        plt.show()
+
+
+
 
 
     def test_interpolate(self):
@@ -473,13 +502,13 @@ class TestGlobalError(unittest.TestCase):
             ]).dot(x)
 
         u0 = 0.01
-        np.random.seed(0)
-        fn = 18
-        ft = np.linspace(0, 6.0, fn)
+        np.random.seed(10)
+        fn = 106
+        ft = np.linspace(0, 15.0, fn)
         k_exp = 0.9
         r_exp = 1.9
         p0 = [0.5, 1.5]
-        bounds = [(0, None), (0, None)]
+        bounds = [(0.01, 3), (0.01, 3)]
         analytic_exp = analytic(ft, (r_exp, k_exp), u0)
         y_exp = analytic_exp + np.random.normal(scale=0.05, size=analytic_exp.shape)
 
@@ -491,10 +520,10 @@ class TestGlobalError(unittest.TestCase):
 
         rhs_tracked = CountCalls(rhs)
         jac_tracked = CountCalls(jac)
-        minimise_adapt = Minimise(
+        minimise_adapt = MinimiseMaxAdapt(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, u0,
-            rtol=1e-4, atol=1e-5
+            rtol=1e-2, atol=1e-3
         )
 
         t0 = time.perf_counter()
@@ -502,6 +531,8 @@ class TestGlobalError(unittest.TestCase):
             minimise_adapt, p0, jac=True, bounds=bounds
         )
         t1 = time.perf_counter()
+        print(res.status)
+        print(res.message)
         print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
             res.x, rhs_tracked.count, jac_tracked.count, t1-t0
         ))
@@ -525,7 +556,7 @@ class TestGlobalError(unittest.TestCase):
         minimise_trad = MinimiseTraditional(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, [u0],
-            rtol=1e-4, atol=1e-5
+            rtol=1e-3, atol=1e-6
         )
 
         t0 = time.perf_counter()
@@ -533,6 +564,8 @@ class TestGlobalError(unittest.TestCase):
             minimise_trad, p0, jac=True, bounds=bounds
         )
         t1 = time.perf_counter()
+        print(res.status)
+        print(res.message)
         print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
             res.x, rhs_tracked.count, jac_tracked.count, t1-t0
         ))
@@ -584,6 +617,8 @@ class TestGlobalError(unittest.TestCase):
             minimise_trad_no_grad, p0, bounds=bounds
         )
         t1 = time.perf_counter()
+        print(res.status)
+        print(res.message)
         print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
             res.x, rhs_tracked.count, jac_tracked.count, t1-t0
         ))

@@ -19,6 +19,15 @@ def runge_kutta41(f, t0, h, y0, args):
     k[3] = f(t0 + h, y0 + h*(k[0] - k[1] + k[2]), *args)
     return y0 + h * (1/8*k[0] + 3/8*k[1] + 3/8*k[2] + 1/8*k[3])
 
+def runge_kutta_ralston(f, t0, h, y0, args):
+    k = np.empty((4, len(y0)), dtype=y0.dtype)
+    k[0] = f(t0, y0, *args)
+    k[1] = f(t0 + 0.4*h, y0 + h*(0.4*k[0]), *args)
+    k[2] = f(t0 + 0.45573725*h, y0 + h*(0.29697761*k[0] + 0.15875964*k[1]), *args)
+    k[3] = f(t0 + h, y0 + h*(0.21810040*k[0] - 3.05096516*k[1] + 3.83286476*k[2]), *args)
+    return y0 + h * (0.17476028*k[0] - 0.55148066*k[1] + 1.20553560*k[2] +
+                     0.17118478*k[3])
+
 
 def runge_kutta5(f, t0, h, y0, args):
     """dormond-price 5th order method"""

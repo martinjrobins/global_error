@@ -7,6 +7,7 @@ from runge_kutta import (
     runge_kutta4,
     runge_kutta5,
     runge_kutta41,
+    runge_kutta_ralston,
 )
 from interpolate import CubicHermiteInterpolate
 
@@ -64,11 +65,8 @@ def adapt(error, times, fix_times, thresh, alpha=0.1):
     # - split those segments that have an error > thresh
     # - join segments whose combined error < alpha * thresh
     # - dont join two segments if it removes a fix_time
-    print(thresh, error)
     split = np.abs(error) > thresh
     join = (np.abs(error[:-1]) + np.abs(error[1:])) < alpha * thresh
-    print(split)
-    print(join)
     T = len(times) + np.sum(split)
     new_times = np.empty(T, dtype=times.dtype)
     new_fix_times = np.empty(T, dtype=fix_times.dtype)
@@ -88,8 +86,6 @@ def adapt(error, times, fix_times, thresh, alpha=0.1):
 
     new_times[index] = times[-1]
     new_fix_times[index] = fix_times[-1]
-    print(times)
-    print(new_times[:index+1])
     return np.resize(new_times, index+1), \
         np.resize(new_fix_times, index+1)
 
@@ -132,6 +128,13 @@ class MinimiseTraditional:
                 self.dfunc_dy, fy, self.ftimes, sol.t,
                 sol.y.T, args=(p,)
             )
+
+        def analytic(t, p, u0):
+            return (
+                p[1] / (1 + (p[1]/ u0 - 1) * np.exp(-p[0] * t))
+            ).reshape(-1, 1)
+        total_error = self.functional(analytic(self.ftimes, p, 0.01)) - f
+
 
         self.total_error.append(total_error)
         self.ntimes.append(len(sol.sol.ts))
@@ -182,6 +185,7 @@ class Minimise:
         self.y0 = y0
         self.rtol = rtol
         self.atol = atol
+        self.old_p = None
 
         self.total_error = []
         self.f_evals = []
@@ -209,12 +213,20 @@ class Minimise:
             y, args=(p,)
         )
 
-        # adapt
-        thresh = abs(f * self.rtol + self.atol)
-        self.times, self.fix_times = adapt(
-            error, self.times, self.fix_times,
-            thresh
-        )
+        # adapt if moving in param space or error is too large
+        thresh = abs(f) * self.rtol + self.atol
+        p_norm = np.sum(p**2)
+        p_thresh = p_norm * self.rtol + self.atol
+
+        error_too_large = abs(total_error) > thresh
+        at_a_new_param = self.old_p is not None and np.sum((p - self.old_p)**2) > p_thresh
+        if error_too_large or at_a_new_param:
+            self.times, self.fix_times = adapt(
+                error, self.times, self.fix_times,
+                thresh / len(self.times)
+            )
+
+        self.old_p = p
 
         self.total_error.append(total_error)
         self.ntimes.append(len(self.times))
@@ -242,6 +254,7 @@ class MinimiseMaxAdapt:
         self.f_evals = []
         self.g_evals = []
         self.ntimes = []
+        self.old_p = None
 
     def __call__(self, p):
         # integrate ode
@@ -254,6 +267,7 @@ class MinimiseMaxAdapt:
                     np.full(len(self.times) - 1, np.inf),
                     self.times, self.fix_times, 1
                 )
+                print('isinf!')
                 continue
 
             # calculate error and sensitivities
@@ -263,8 +277,16 @@ class MinimiseMaxAdapt:
                 y, args=(p,)
             )
 
-            thresh = abs(f * self.rtol + self.atol)
-            if abs(total_error) < thresh:
+            # will adapt at least once if we move to a new parameter
+            # will always adapt if the error is not within tolerance
+            thresh = abs(f) * self.rtol + self.atol
+            p_norm = np.sum(p**2)
+            p_thresh = p_norm * self.rtol + self.atol
+            error_good = abs(total_error) < thresh
+            at_same_param = self.old_p is not None and np.sum((p - self.old_p)**2) < p_thresh
+            self.old_p = p
+
+            if error_good and at_same_param:
                 break
 
             # adapt
@@ -272,6 +294,12 @@ class MinimiseMaxAdapt:
                 error, self.times, self.fix_times,
                 thresh / len(self.times)
             )
+
+            if error_good:
+                break
+
+
+            print(thresh, error)
 
         self.total_error.append(total_error)
         self.ntimes.append(len(self.times))
@@ -423,16 +451,19 @@ def adjoint_error_and_sensitivities(
 
     # this is index into ftimes
     j = len(fy) - 1
+    rhs0 = rhs(times[-1], y[-1], *args)
     for i in reversed(range(len(times)-1)):
 
         t0 = times[i]
         t1 = times[i+1]
         t = t1
         phi_error1 = phi_error_dJdp[-1-n_params]
+        rhs1 = rhs0
+        rhs0 = rhs(t0, y[i], *args)
 
         y_interp = CubicHermiteInterpolate(
             t0, t1, y[i], y[i+1],
-            rhs(t0, y[i], *args), rhs(t1, y[i+1], *args)
+            rhs0, rhs1
         )
 
         # if t1 is a fix time then integrate over delta function
@@ -488,6 +519,7 @@ def adjoint_error_and_sensitivities_independent_ftimes(
 
     # this is index into ftimes
     j = len(ftimes) - 1
+    rhs0 = rhs(times[-1], y[-1], *args)
     for i in reversed(range(len(times)-1)):
 
         t0 = times[i]
@@ -495,10 +527,12 @@ def adjoint_error_and_sensitivities_independent_ftimes(
         ft = ftimes[j]
         t = t1
         phi_error1 = phi_error_dJdp[-1-n_params]
+        rhs1 = rhs0
+        rhs0 = rhs(t0, y[i], *args)
 
         y_interp = CubicHermiteInterpolate(
             t0, t1, y[i], y[i+1],
-            rhs(t0, y[i], *args), rhs(t1, y[i+1], *args)
+            rhs0, rhs1
         )
 
         # ft could be == to t1
