@@ -235,6 +235,83 @@ class Minimise:
 
         return f, g
 
+class MinimiseInterp:
+    def __init__(self, rhs, jac, drhs_dp,
+                 functional, dfunc_dy, ftimes, y0, rtol=1e-4, atol=1e-6):
+        self.dfunc_dy = dfunc_dy
+        self.functional = functional
+        self.times = ftimes
+        self.fix_times = np.zeros(len(self.times), dtype=bool)
+        self.rhs = rhs
+        self.drhs_dp = drhs_dp
+        self.jac = jac
+        self.y0 = y0
+        self.rtol = rtol
+        self.atol = atol
+
+        self.total_error = []
+        self.f_evals = []
+        self.g_evals = []
+        self.ntimes = []
+        self.old_p = None
+
+    def __call__(self, p):
+        # integrate ode
+        while True:
+            y = integrate(self.rhs, self.times, self.y0,
+                          args=(p,), method=runge_kutta41)
+            print('yshape', y.shape)
+
+            if np.isinf(y).any():
+                self.times, self.fix_times = adapt(
+                    np.full(len(self.times) - 1, np.inf),
+                    self.times, self.fix_times, 1
+                )
+                print('isinf!')
+                continue
+
+            # calculate error and sensitivities
+            total_error, error, f, g = adjoint_error_and_sensitivities_interp(
+                self.rhs, self.jac, self.drhs_dp,
+                self.functional, self.dfunc_dy, self.times,
+                y, args=(p,)
+            )
+            print('XXXXX', total_error, error, f, g)
+
+            # will adapt at least once if we move to a new parameter
+            # will always adapt if the error is not within tolerance
+            thresh = abs(f) * self.rtol + self.atol
+            p_norm = np.sum(p**2)
+            p_thresh = p_norm * self.rtol + self.atol
+            error_good = abs(total_error) < thresh
+            at_same_param = self.old_p is not None and np.sum((p - self.old_p)**2) < p_thresh
+            self.old_p = p
+
+            if error_good and at_same_param:
+                break
+
+            # adapt
+            print('adapt!')
+            self.times, self.fix_times = adapt(
+                error, self.times, self.fix_times,
+                thresh / len(self.times)
+            )
+
+            if error_good:
+                break
+
+
+            print(thresh, error)
+
+        self.total_error.append(total_error)
+        self.ntimes.append(len(self.times))
+        self.f_evals.append(f)
+        self.g_evals.append(g)
+
+        return f, g
+
+
+
 class MinimiseMaxAdapt:
     def __init__(self, rhs, jac, drhs_dp, funcional,
                  dfunc_dy, ftimes, y0, rtol=1e-4, atol=1e-6):
@@ -414,6 +491,59 @@ def integrate_adaptive(
             break
 
     return y, times, f, t_rhs_calls, t_jac_calls
+
+def adjoint_error_and_sensitivities_interp(
+        rhs, jac, drhs_dp, functional, dfunc_dy, times, y, args=(), method=runge_kutta5
+):
+
+    T = len(times)
+    n = y.shape[1]
+
+    # define the adjoint error equations
+    def adjoint_error_and_sensitivities(
+            t, phi_f_error_dJdp_f, y_interp, *args
+    ):
+        phi = phi_f_error_dJdp[:n]
+        yt = y_interp(t)
+        return np.concatenate((
+            -jac(t, yt, phi, *args) - dfunc_dy(t, yt),
+            [-functional(t, yt)],
+            (rhs(t, yt, *args) - y_interp.grad(t)) * phi,
+            -drhs_dp(t, yt, phi, *args),
+        ))
+
+    phi = np.zeros(n, dtype=y.dtype)
+    n_params = len(drhs_dp(times[-1], y[-1], phi, *args))
+    phi_f_error_dJdp = np.zeros(n + 2 + n_params, dtype=y.dtype)
+    error = np.empty(T-1, dtype=y.dtype)
+
+    rhs0 = rhs(times[-1], y[-1], *args)
+    for i in reversed(range(len(times)-1)):
+
+        t0 = times[i]
+        t1 = times[i+1]
+        t = t1
+        phi_error1 = phi_f_error_dJdp[-1-n_params]
+        rhs1 = rhs0
+        rhs0 = rhs(t0, y[i], *args)
+
+        y_interp = CubicHermiteInterpolate(
+            t0, t1, y[i], y[i+1],
+            rhs0, rhs1
+        )
+
+        # integrate to t0
+        phi_f_error_dJdp = method(adjoint_error_and_sensitivities,
+                                t, t0-t,
+                                phi_f_error_dJdp, (y_interp,) + args)
+        error[i] = phi_f_error_dJdp[-1-n_params] - phi_error1
+
+    total_error = phi_f_error_dJdp[-1-n_params]
+    sensitivities = phi_f_error_dJdp[-n_params:]
+    f = phi_f_error_dJdp[-2-n_params]
+    return total_error, error, f, sensitivities
+
+
 
 def adjoint_error_and_sensitivities(
         rhs, jac, drhs_dp, functional, dfunc_dy, fix_times, times, y, args=(), method=runge_kutta5

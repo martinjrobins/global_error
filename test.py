@@ -5,9 +5,10 @@ from integrate import (
     adjoint_sensitivities_single_times,
     adjoint_error_single_times,
     adjoint_error, adjoint_error_and_sensitivities,
+    adjoint_error_and_sensitivities_interp,
     adjoint_error_and_sensitivities_independent_ftimes,
     Minimise, MinimiseTraditional, MinimiseTraditionalNoGradient,
-    MinimiseNonFixed, MinimiseMaxAdapt
+    MinimiseNonFixed, MinimiseMaxAdapt, MinimiseInterp
 )
 from interpolate import CubicHermiteInterpolate
 import jax.numpy as jnp
@@ -222,13 +223,16 @@ class TestGlobalError(unittest.TestCase):
 
         t = np.linspace(0, 12.0, 100)
         y = integrate(rhs, t, u0)
-        ft = np.linspace(0, 12.0, 13)
+
+        ft = np.linspace(0, 12.0, 10)
         analytic_exp = analytic(ft, (r, k), u0)
         y_exp = analytic_exp + \
             np.random.normal(scale=0.15, size=analytic_exp.shape)
 
-        _, _, f, g = adjoint_error_and_sensitivities(
-            rhs, jac, drhs_dp, functional, dfunc_dy, ft, t, y
+
+        fy = interpolate(y, t, rhs, ft)
+        _, _, f, g = adjoint_error_and_sensitivities_independent_ftimes(
+            rhs, jac, drhs_dp, functional, dfunc_dy, fy, ft, t, y
         )
 
         analytic_dydr = k * ft * (k / u0 - 1) * np.exp(-r * ft) / \
@@ -248,6 +252,49 @@ class TestGlobalError(unittest.TestCase):
             f, rtol=1e-6, atol=0
         )
 
+        y_exp_interp = scipy.interpolate.interp1d(ft, y_exp, axis=0, kind='cubic')
+
+        def functional_interp(t, y):
+            return np.sum((y - y_exp_interp(t))**2)
+
+        def dfunc_dy_interp(t, y):
+            return 2 * (y - y_exp_interp(t))
+
+        _, _, f, g = adjoint_error_and_sensitivities_interp(
+            rhs, jac, drhs_dp, functional_interp, dfunc_dy_interp, t, y
+        )
+
+        analytic_dydr = k * ft * (k / u0 - 1) * np.exp(-r * ft) / \
+            ((k / u0 - 1) * np.exp(-r * ft) + 1)**2
+        analytic_dydk = -k * np.exp(-r * ft) / \
+            (u0 * ((k / u0 - 1) * np.exp(-r * ft) + 1)**2) \
+            + 1 / ((k / u0 - 1) * np.exp(-r * ft) + 1)
+        analytic_dydp = np.stack(
+            (analytic_dydr, analytic_dydk), axis=1
+        )
+        analytic_g = np.array([0.0, 0.0])
+        N = 500
+        dt = 12 / N
+        for t in np.linspace(0, 12.0, N):
+            analytic_exp = analytic(t, (r, k), u0)
+            analytic_dydr = k * t * (k / u0 - 1) * np.exp(-r * t) / \
+                ((k / u0 - 1) * np.exp(-r * t) + 1)**2
+            analytic_dydk = -k * np.exp(-r * t) / \
+                (u0 * ((k / u0 - 1) * np.exp(-r * t) + 1)**2) \
+                + 1 / ((k / u0 - 1) * np.exp(-r * t) + 1)
+
+            analytic_dydp = np.stack(
+                (analytic_dydr, analytic_dydk)
+            )
+            analytic_g += dt*dfunc_dy_interp(t, analytic_exp).reshape(-1)*analytic_dydp
+
+        np.testing.assert_allclose(
+            analytic_g, g, rtol=1e-4, atol=0
+        )
+        np.testing.assert_allclose(
+            functional(analytic_exp),
+            f, rtol=1e-6, atol=0
+        )
 
     def test_logistic_adjoint_error(self):
         def analytic(t, p, u0):
@@ -319,6 +366,35 @@ class TestGlobalError(unittest.TestCase):
             total_error, rtol=1e-2, atol=0
         )
 
+        y_exp_interp = scipy.interpolate.interp1d(ft, y_exp, axis=0, kind='cubic')
+
+        def functional_interp(t, y):
+            return np.sum((y - y_exp_interp(t))**2)
+
+        def dfunc_dy_interp(t, y):
+            return 2 * (y - y_exp_interp(t))
+
+        total_error, error, f, _ = adjoint_error_and_sensitivities_interp(
+            rhs, jac, drhs_dp, functional_interp, dfunc_dy_interp, t, y
+        )
+
+        np.testing.assert_allclose(
+            total_error, np.sum(error),
+            rtol=1e-6
+        )
+
+        N = 500
+        dt = 12 / N
+        analytic_f = 0
+        for t in np.linspace(0, 12.0, N):
+            analytic_exp = analytic(t, (r, k), u0)
+            analytic_f += dt*functional_interp(t, analytic_exp)
+
+        np.testing.assert_allclose(
+            f - analytic_f,
+            total_error, rtol=1e-2, atol=0
+        )
+
         errors = []
         ns = [10, 100, 1000, 10000]
         for n in ns:
@@ -341,9 +417,6 @@ class TestGlobalError(unittest.TestCase):
         plt.loglog(ns, np.array(ns, dtype=float)**(-4), label='n^-4')
         plt.legend()
         plt.show()
-
-
-
 
 
     def test_interpolate(self):
@@ -511,6 +584,7 @@ class TestGlobalError(unittest.TestCase):
         bounds = [(0.01, 3), (0.01, 3)]
         analytic_exp = analytic(ft, (r_exp, k_exp), u0)
         y_exp = analytic_exp + np.random.normal(scale=0.05, size=analytic_exp.shape)
+        y_exp_interp = scipy.interpolate.interp1d(ft, y_exp, axis=0, kind='cubic')
 
         def functional(y):
             return np.sum((y - y_exp)**2)
@@ -518,6 +592,14 @@ class TestGlobalError(unittest.TestCase):
         def dfunc_dy(y):
             return 2 * (y - y_exp)
 
+        def functional_interp(t, y):
+            return np.sum((y - y_exp_interp(t))**2)
+
+        def dfunc_dy_interp(t, y):
+            return 2 * (y - y_exp_interp(t))
+
+
+        # MinimiseMaxAdapt
         rhs_tracked = CountCalls(rhs)
         jac_tracked = CountCalls(jac)
         minimise_adapt = MinimiseMaxAdapt(
@@ -550,6 +632,40 @@ class TestGlobalError(unittest.TestCase):
         )
         plt.legend()
         plt.savefig('test_minimise_adaptive_fit.pdf')
+
+        # MinimiseInterp
+        rhs_tracked = CountCalls(rhs)
+        jac_tracked = CountCalls(jac)
+        minimise_interp = MinimiseInterp(
+            rhs_tracked, jac_tracked,
+            drhs_dp, functional_interp, dfunc_dy_interp, ft, u0,
+            rtol=1e-2, atol=1e-3
+        )
+
+        t0 = time.perf_counter()
+        res = scipy.optimize.minimize(
+            minimise_interp, p0, jac=True, bounds=bounds
+        )
+        t1 = time.perf_counter()
+        print(res.status)
+        print(res.message)
+        print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
+            res.x, rhs_tracked.count, jac_tracked.count, t1-t0
+        ))
+        analytic_fit = analytic(minimise_interp.times, res.x, u0)
+
+        plt.clf()
+        plt.plot(minimise_interp.times, analytic_fit, '.-', label='fit')
+        plt.plot(ft, y_exp, '.', label='data')
+        plt.xlabel('t')
+        plt.ylabel('y')
+        plt.title(
+            'adaptive minimiser interp (#rhs = {}, #jac = {})'.format(
+                rhs_tracked.count, jac_tracked.count
+            )
+        )
+        plt.legend()
+        plt.savefig('test_minimise_adaptive_interp_fit.pdf')
 
         rhs_tracked = CountCalls(rhs)
         jac_tracked = CountCalls(jac)
@@ -591,6 +707,9 @@ class TestGlobalError(unittest.TestCase):
             np.abs(np.array(minimise_adapt.total_error) / minimise_adapt.f_evals),
             '-', label='adaptive')
         plt.semilogy(
+            np.abs(np.array(minimise_interp.total_error) / minimise_interp.f_evals),
+            '-', label='adaptive interp')
+        plt.semilogy(
             np.abs(np.array(minimise_trad.total_error) / minimise_trad.f_evals),
             '-', label='traditional')
         plt.xlabel('function eval #')
@@ -598,6 +717,8 @@ class TestGlobalError(unittest.TestCase):
         plt.subplot(1, 2, 2)
         plt.plot(minimise_adapt.ntimes, '-',
                  label='adapt')
+        plt.plot(minimise_interp.ntimes, '-',
+                 label='adapt interp')
         plt.plot(minimise_trad.ntimes, '-',
                  label='traditional')
         plt.xlabel('function eval #')
@@ -622,11 +743,6 @@ class TestGlobalError(unittest.TestCase):
         print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
             res.x, rhs_tracked.count, jac_tracked.count, t1-t0
         ))
-
-
-
-
-
 
 
 
