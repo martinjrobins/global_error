@@ -264,35 +264,31 @@ class TestGlobalError(unittest.TestCase):
             rhs, jac, drhs_dp, functional_interp, dfunc_dy_interp, t, y
         )
 
-        analytic_dydr = k * ft * (k / u0 - 1) * np.exp(-r * ft) / \
-            ((k / u0 - 1) * np.exp(-r * ft) + 1)**2
-        analytic_dydk = -k * np.exp(-r * ft) / \
-            (u0 * ((k / u0 - 1) * np.exp(-r * ft) + 1)**2) \
-            + 1 / ((k / u0 - 1) * np.exp(-r * ft) + 1)
-        analytic_dydp = np.stack(
-            (analytic_dydr, analytic_dydk), axis=1
-        )
-        analytic_g = np.array([0.0, 0.0])
-        N = 500
-        dt = 12 / N
-        for t in np.linspace(0, 12.0, N):
+        def analytic_f_func(t):
+            analytic_exp = analytic(t, (r, k), u0)
+            return functional_interp(t, analytic_exp)
+        def analytic_gr_func(t):
             analytic_exp = analytic(t, (r, k), u0)
             analytic_dydr = k * t * (k / u0 - 1) * np.exp(-r * t) / \
                 ((k / u0 - 1) * np.exp(-r * t) + 1)**2
+            return dfunc_dy_interp(t, analytic_exp)*analytic_dydr
+        def analytic_gk_func(t):
+            analytic_exp = analytic(t, (r, k), u0)
             analytic_dydk = -k * np.exp(-r * t) / \
                 (u0 * ((k / u0 - 1) * np.exp(-r * t) + 1)**2) \
                 + 1 / ((k / u0 - 1) * np.exp(-r * t) + 1)
+            return dfunc_dy_interp(t, analytic_exp)*analytic_dydk
 
-            analytic_dydp = np.stack(
-                (analytic_dydr, analytic_dydk)
-            )
-            analytic_g += dt*dfunc_dy_interp(t, analytic_exp).reshape(-1)*analytic_dydp
+
+        analytic_gr = scipy.integrate.quad(analytic_gr_func, 0, 12)[0]
+        analytic_gk = scipy.integrate.quad(analytic_gk_func, 0, 12)[0]
+        analytic_f = scipy.integrate.quad(analytic_f_func, 0, 12)[0]
 
         np.testing.assert_allclose(
-            analytic_g, g, rtol=1e-4, atol=0
+            [analytic_gr, analytic_gk], g, rtol=1e-4, atol=0
         )
         np.testing.assert_allclose(
-            functional(analytic_exp),
+            analytic_f,
             f, rtol=1e-6, atol=0
         )
 
@@ -343,7 +339,7 @@ class TestGlobalError(unittest.TestCase):
             error, rtol=2e-3, atol=0
         )
 
-        t = np.linspace(0, 12.0, 15)
+        t = np.linspace(0, 12.0, 13)
         y = integrate(rhs, t, u0)
         ft = np.linspace(0, 12.0, 13)
         analytic_exp = analytic(ft, (r, k), u0)
@@ -355,6 +351,7 @@ class TestGlobalError(unittest.TestCase):
             adjoint_error_and_sensitivities_independent_ftimes(
                 rhs, jac, drhs_dp, functional, dfunc_dy, fy, ft, t, y
             )
+        print(f)
 
         np.testing.assert_allclose(
             total_error, np.sum(error),
@@ -368,27 +365,28 @@ class TestGlobalError(unittest.TestCase):
 
         y_exp_interp = scipy.interpolate.interp1d(ft, y_exp, axis=0, kind='cubic')
 
-        def functional_interp(t, y):
-            return np.sum((y - y_exp_interp(t))**2)
+        def functional_interp(t, u):
+            return np.sum((u - y_exp_interp(t))**2)
 
-        def dfunc_dy_interp(t, y):
-            return 2 * (y - y_exp_interp(t))
+        def dfunc_dy_interp(t, u):
+            return 2 * (u - y_exp_interp(t))
 
         total_error, error, f, _ = adjoint_error_and_sensitivities_interp(
             rhs, jac, drhs_dp, functional_interp, dfunc_dy_interp, t, y
         )
+        print(f)
+        print(error)
 
         np.testing.assert_allclose(
             total_error, np.sum(error),
             rtol=1e-6
         )
 
-        N = 500
-        dt = 12 / N
-        analytic_f = 0
-        for t in np.linspace(0, 12.0, N):
-            analytic_exp = analytic(t, (r, k), u0)
-            analytic_f += dt*functional_interp(t, analytic_exp)
+        analytic_f, analytic_err = scipy.integrate.quad(
+            lambda it: functional_interp(it, analytic(it, (r, k), u0)), 0, 12.0
+        )
+
+        print(analytic_f, analytic_err)
 
         np.testing.assert_allclose(
             f - analytic_f,

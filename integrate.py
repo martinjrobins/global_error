@@ -501,9 +501,9 @@ def adjoint_error_and_sensitivities_interp(
 
     # define the adjoint error equations
     def adjoint_error_and_sensitivities(
-            t, phi_f_error_dJdp_f, y_interp, *args
+            t, state, y_interp, *args
     ):
-        phi = phi_f_error_dJdp[:n]
+        phi = state[:n]
         yt = y_interp(t)
         return np.concatenate((
             -jac(t, yt, phi, *args) - dfunc_dy(t, yt),
@@ -534,8 +534,8 @@ def adjoint_error_and_sensitivities_interp(
 
         # integrate to t0
         phi_f_error_dJdp = method(adjoint_error_and_sensitivities,
-                                t, t0-t,
-                                phi_f_error_dJdp, (y_interp,) + args)
+                                  t, t0-t,
+                                  phi_f_error_dJdp, (y_interp,) + args)
         error[i] = phi_f_error_dJdp[-1-n_params] - phi_error1
 
     total_error = phi_f_error_dJdp[-1-n_params]
