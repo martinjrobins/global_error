@@ -316,8 +316,7 @@ class TestGlobalError(unittest.TestCase):
         u0 = 0.1
         t = np.linspace(0, 10.0, 20)
         y = integrate(rhs, t, u0)
-        analytic_t = k / (1 + (k / u0 - 1) * np.exp(-r * t))\
-            .reshape(-1, 1)
+        analytic_t = analytic(t, (r, k), u0)
         np.testing.assert_allclose(
             analytic_t, y, rtol=1e-3, atol=0
         )
@@ -336,12 +335,12 @@ class TestGlobalError(unittest.TestCase):
 
         np.testing.assert_allclose(
             functional(y) - functional(analytic_t),
-            error, rtol=2e-3, atol=0
+            error, rtol=6e-3, atol=0
         )
 
-        t = np.linspace(0, 12.0, 13)
+        t = np.linspace(0, 12.0, 20)
         y = integrate(rhs, t, u0)
-        ft = np.linspace(0, 12.0, 13)
+        ft = np.linspace(0, 12.0, 15)
         analytic_exp = analytic(ft, (r, k), u0)
         y_exp = analytic_exp + \
             np.random.normal(scale=0.15, size=analytic_exp.shape)
@@ -360,7 +359,7 @@ class TestGlobalError(unittest.TestCase):
 
         np.testing.assert_allclose(
             f - functional(analytic_exp),
-            total_error, rtol=1e-2, atol=0
+            total_error, rtol=3e-2, atol=0
         )
 
         y_exp_interp = scipy.interpolate.interp1d(ft, y_exp, axis=0, kind='cubic')
@@ -374,8 +373,7 @@ class TestGlobalError(unittest.TestCase):
         total_error, error, f, _ = adjoint_error_and_sensitivities_interp(
             rhs, jac, drhs_dp, functional_interp, dfunc_dy_interp, t, y
         )
-        print(f)
-        print(error)
+        print('f = ', f)
 
         np.testing.assert_allclose(
             total_error, np.sum(error),
@@ -386,7 +384,14 @@ class TestGlobalError(unittest.TestCase):
             lambda it: functional_interp(it, analytic(it, (r, k), u0)), 0, 12.0
         )
 
-        print(analytic_f, analytic_err)
+        print('analytic f = ', analytic_f)
+        print('error = ', error)
+        print('total error = ', total_error)
+
+        plt.plot(t, y, label='sim')
+        ft = np.linspace(0, 12, 1000)
+        plt.plot(ft, y_exp_interp(ft), label='exp')
+        plt.show()
 
         np.testing.assert_allclose(
             f - analytic_f,
@@ -414,7 +419,7 @@ class TestGlobalError(unittest.TestCase):
         plt.loglog(ns, np.abs(errors))
         plt.loglog(ns, np.array(ns, dtype=float)**(-4), label='n^-4')
         plt.legend()
-        plt.show()
+        plt.savefig('rel_error_versus_n.pdf')
 
 
     def test_interpolate(self):
@@ -573,9 +578,9 @@ class TestGlobalError(unittest.TestCase):
             ]).dot(x)
 
         u0 = 0.01
-        np.random.seed(10)
-        fn = 10
-        ft = np.linspace(0, 15.0, fn)
+        np.random.seed(5)
+        fn = 16
+        ft = np.linspace(0, 12.0, fn)
         k_exp = 0.9
         r_exp = 1.9
         p0 = [0.5, 1.5]
@@ -598,12 +603,13 @@ class TestGlobalError(unittest.TestCase):
 
 
         # MinimiseMaxAdapt
+        print('running MinimiseMaxAdapt')
         rhs_tracked = CountCalls(rhs)
         jac_tracked = CountCalls(jac)
         minimise_adapt = MinimiseMaxAdapt(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, u0,
-            rtol=1e-2, atol=1e-3
+            rtol=1e-4, atol=1e-4
         )
 
         t0 = time.perf_counter()
@@ -631,13 +637,50 @@ class TestGlobalError(unittest.TestCase):
         plt.legend()
         plt.savefig('test_minimise_adaptive_fit.pdf')
 
+        # MinimiseNonFixed
+        print('running MinimiseNonFixed')
+        rhs_tracked = CountCalls(rhs)
+        jac_tracked = CountCalls(jac)
+        minimise_nonfixed = MinimiseNonFixed(
+            rhs_tracked, jac_tracked,
+            drhs_dp, functional, dfunc_dy, ft, u0,
+            rtol=1e-4, atol=1e-4
+        )
+
+        t0 = time.perf_counter()
+        res = scipy.optimize.minimize(
+            minimise_nonfixed, p0, jac=True, bounds=bounds
+        )
+        t1 = time.perf_counter()
+        print(res.status)
+        print(res.message)
+        print('final p = {}, #rhs = {}, #jac = {}, time = {}'.format(
+            res.x, rhs_tracked.count, jac_tracked.count, t1-t0
+        ))
+        analytic_fit = analytic(minimise_nonfixed.times, res.x, u0)
+
+        plt.clf()
+        plt.plot(minimise_nonfixed.times, analytic_fit, '.-', label='fit')
+        plt.plot(ft, y_exp, '.', label='data')
+        plt.xlabel('t')
+        plt.ylabel('y')
+        plt.title(
+            'adaptive nonfixed minimiser (#rhs = {}, #jac = {})'.format(
+                rhs_tracked.count, jac_tracked.count
+            )
+        )
+        plt.legend()
+        plt.savefig('test_minimise_adaptive_nonfixed_fit.pdf')
+
+
         # MinimiseInterp
+        print('running MinimiseInterp')
         rhs_tracked = CountCalls(rhs)
         jac_tracked = CountCalls(jac)
         minimise_interp = MinimiseInterp(
             rhs_tracked, jac_tracked,
             drhs_dp, functional_interp, dfunc_dy_interp, ft, u0,
-            rtol=1e-2, atol=1e-3
+            rtol=1e-4, atol=1e-4
         )
 
         t0 = time.perf_counter()
@@ -665,12 +708,13 @@ class TestGlobalError(unittest.TestCase):
         plt.legend()
         plt.savefig('test_minimise_adaptive_interp_fit.pdf')
 
+        print('running MinimiseTraditional')
         rhs_tracked = CountCalls(rhs)
         jac_tracked = CountCalls(jac)
         minimise_trad = MinimiseTraditional(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, [u0],
-            rtol=1e-3, atol=1e-6
+            rtol=1e-5, atol=1e-5
         )
 
         t0 = time.perf_counter()
@@ -710,6 +754,10 @@ class TestGlobalError(unittest.TestCase):
         plt.semilogy(
             np.abs(np.array(minimise_trad.total_error) / minimise_trad.f_evals),
             '-', label='traditional')
+        plt.semilogy(
+            np.abs(np.array(minimise_nonfixed.total_error) / minimise_nonfixed.f_evals),
+            '-', label='adaptive nonfixed')
+
         plt.xlabel('function eval #')
         plt.ylabel('total error using adjoint')
         plt.subplot(1, 2, 2)
@@ -719,17 +767,20 @@ class TestGlobalError(unittest.TestCase):
                  label='adapt interp')
         plt.plot(minimise_trad.ntimes, '-',
                  label='traditional')
+        plt.plot(minimise_nonfixed.ntimes, '-',
+                 label='adapt nonfixed')
         plt.xlabel('function eval #')
         plt.ylabel('# time points for ode solve')
         plt.legend()
         plt.savefig('test_minimise_comparison.pdf')
 
+        print('running MinimiseTraditionalNoGradient')
         rhs_tracked = CountCalls(rhs)
         jac_tracked = CountCalls(jac)
         minimise_trad_no_grad = MinimiseTraditionalNoGradient(
             rhs_tracked, jac_tracked,
             drhs_dp, functional, dfunc_dy, ft, [u0],
-            rtol=1e-5, atol=1e-4
+            rtol=1e-4, atol=1e-4
         )
         t0 = time.perf_counter()
         res = scipy.optimize.minimize(

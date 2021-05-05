@@ -260,9 +260,10 @@ class MinimiseInterp:
         while True:
             y = integrate(self.rhs, self.times, self.y0,
                           args=(p,), method=runge_kutta41)
-            print('yshape', y.shape)
 
-            if np.isinf(y).any():
+            if (np.isinf(y).any()
+                    or np.isnan(y).any()
+                    or np.sum((y[-1]-self.y0)**2) > 1e10):
                 self.times, self.fix_times = adapt(
                     np.full(len(self.times) - 1, np.inf),
                     self.times, self.fix_times, 1
@@ -276,7 +277,6 @@ class MinimiseInterp:
                 self.functional, self.dfunc_dy, self.times,
                 y, args=(p,)
             )
-            print('XXXXX', total_error, error, f, g)
 
             # will adapt at least once if we move to a new parameter
             # will always adapt if the error is not within tolerance
@@ -291,17 +291,15 @@ class MinimiseInterp:
                 break
 
             # adapt
-            print('adapt!')
             self.times, self.fix_times = adapt(
                 error, self.times, self.fix_times,
-                thresh / len(self.times)
+                thresh / (len(self.times) - 1)
             )
 
             if error_good:
                 break
 
 
-            print(thresh, error)
 
         self.total_error.append(total_error)
         self.ntimes.append(len(self.times))
@@ -339,7 +337,10 @@ class MinimiseMaxAdapt:
             y = integrate(self.rhs, self.times, self.y0,
                           args=(p,), method=runge_kutta41)
 
-            if np.isinf(y).any():
+            if (np.isinf(y).any()
+                    or np.isnan(y).any()
+                    or np.sum((y[-1]-self.y0)**2) > 1e10):
+
                 self.times, self.fix_times = adapt(
                     np.full(len(self.times) - 1, np.inf),
                     self.times, self.fix_times, 1
@@ -367,17 +368,17 @@ class MinimiseMaxAdapt:
                 break
 
             # adapt
+            print('adapt! error_good={} thresh={} error={}'.format(error_good, thresh,
+                                                                   total_error))
             self.times, self.fix_times = adapt(
                 error, self.times, self.fix_times,
-                thresh / len(self.times)
+                thresh / (len(self.times) - 1)
             )
 
             if error_good:
                 break
 
-
-            print(thresh, error)
-
+        print('finished eval')
         self.total_error.append(total_error)
         self.ntimes.append(len(self.times))
         self.f_evals.append(f)
@@ -405,38 +406,54 @@ class MinimiseNonFixed:
         self.f_evals = []
         self.g_evals = []
         self.ntimes = []
+        self.old_p = None
 
     def __call__(self, p):
-        # integrate ode
+        fix_times = np.zeros(len(self.times), dtype=bool)
         while True:
             y = integrate(self.rhs, self.times, self.y0,
                           args=(p,), method=runge_kutta41)
 
-            if not np.isinf(y).any():
+            if (np.isinf(y).any()
+                    or np.isnan(y).any()
+                    or np.sum((y[-1]-self.y0)**2) > 1e10):
+
+                self.times, fix_times = adapt(
+                    np.full(len(self.times) - 1, np.inf),
+                    self.times, fix_times, 1
+                )
+                print('isinf!')
+                continue
+
+            fy = interpolate(y, self.times, self.rhs, self.ftimes,
+                             args=(p,))
+            total_error, error, f, g = \
+                adjoint_error_and_sensitivities_independent_ftimes(
+                    self.rhs, self.jac, self.drhs_dp, self.functional,
+                    self.dfunc_dy, fy, self.ftimes, self.times,
+                    y, args=(p,)
+                )
+
+            # will adapt at least once if we move to a new parameter
+            # will always adapt if the error is not within tolerance
+            thresh = abs(f) * self.rtol + self.atol
+            p_norm = np.sum(p**2)
+            p_thresh = p_norm * self.rtol + self.atol
+            error_good = abs(total_error) < thresh
+            at_same_param = self.old_p is not None and np.sum((p - self.old_p)**2) < p_thresh
+            self.old_p = p
+
+            if error_good and at_same_param:
                 break
 
-            self.times, self.fix_times = adapt(
-                np.full(len(self.times) - 1, np.inf),
-                self.times, self.fix_times, 1
+            # adapt
+            self.times, fix_times = adapt(
+                error, self.times, fix_times,
+                thresh / (len(self.times) - 1)
             )
 
-        # calculate error and sensitivities
-        fy = interpolate(y, self.times, self.rhs, self.ftimes,
-                         args=(p,))
-        total_error, error, f, g = \
-            adjoint_error_and_sensitivities_independent_ftimes(
-                self.rhs, self.jac, self.drhs_dp, self.functional,
-                self.dfunc_dy, fy, self.ftimes, self.times,
-                y, args=(p,)
-            )
-
-        # adapt
-        fix_times = np.zeros(len(self.times), dtype=bool)
-        thresh = f * self.rtol + self.atol
-        self.times, self.fix_times = adapt(
-            error, self.times, fix_times,
-            thresh
-        )
+            if error_good:
+                break
 
         self.total_error.append(total_error)
         self.ntimes.append(len(self.times))
@@ -522,7 +539,6 @@ def adjoint_error_and_sensitivities_interp(
 
         t0 = times[i]
         t1 = times[i+1]
-        t = t1
         phi_error1 = phi_f_error_dJdp[-1-n_params]
         rhs1 = rhs0
         rhs0 = rhs(t0, y[i], *args)
@@ -534,8 +550,15 @@ def adjoint_error_and_sensitivities_interp(
 
         # integrate to t0
         phi_f_error_dJdp = method(adjoint_error_and_sensitivities,
-                                  t, t0-t,
+                                  t1, t0-t1,
                                   phi_f_error_dJdp, (y_interp,) + args)
+
+        #phi_f_error_dJdp = method(adjoint_error_and_sensitivities,
+        #                          t1, 0.5*(t0-t1),
+        #                          phi_f_error_dJdp, (y_interp,) + args)
+        #phi_f_error_dJdp = method(adjoint_error_and_sensitivities,
+        #                          0.5*(t0+t1), 0.5*(t0-t1),
+        #                          phi_f_error_dJdp, (y_interp,) + args)
         error[i] = phi_f_error_dJdp[-1-n_params] - phi_error1
 
     total_error = phi_f_error_dJdp[-1-n_params]
